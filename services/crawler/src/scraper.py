@@ -12,6 +12,8 @@ from configs import (
     MAX_RETRIES,
     MIN_ADAPTIVE_DELAY,
     TARGET_REVIEWS_COUNT,
+    COUNTRY_CODE,
+    LANG_CODE,
 )
 from google_play_scraper import Sort, app, reviews
 from google_play_scraper.exceptions import NotFoundError
@@ -44,8 +46,22 @@ class PlayStoreScraper:
 
 
     def get_app_metrics(self, package_name: str) -> AppMetrics | None:
-        # TODO: DAY 1
-        pass
+        for attempt in range(self.max_retries):
+            try:
+                payload = self.fetch_app_details(package_name, lang=LANG_CODE, country=COUNTRY_CODE)
+                if payload is None:
+                    return None
+                return AppMetrics.from_scraped_payload(payload, datetime.now(UTC).isoformat())
+            except NotFoundError:
+                logger.warning("App not found on Google Play: %s", package_name)
+                return None
+            except Exception:
+                if attempt == self.max_retries - 1:
+                    logger.exception("Could not fetch app metrics for %s", package_name)
+                    return None
+                delay = min(self.base_backoff * 2**attempt, self.max_backoff)
+                time.sleep(delay)
+        return None
 
     def get_latest_reviews(self, package_name: str, count: int = TARGET_REVIEWS_COUNT) -> list[dict[str, Any]]:
         # TODO: DAY 2

@@ -33,3 +33,21 @@ class AppMetrics:
     store_updated_at: str | None
     scraped_at: str
 
+    @classmethod
+    def from_scraped_payload(cls, payload: dict[str, Any], scraped_at: str) -> "AppMetrics":
+        updated = payload.get("updated")
+        return cls(
+            min_installs=payload.get("minInstalls"),
+            real_installs=payload.get("realInstalls"),
+            score=round(float(payload.get("score") or 0), 2),
+            ratings=payload.get("ratings"),
+            reviews_count=payload.get("reviews"),
+            version=payload.get("version") or FALLBACK_VERSION_LABEL,
+            ad_supported=bool(payload.get("adSupported")),
+            store_updated_at=datetime.fromtimestamp(updated, tz=UTC).isoformat() if updated else None,
+            scraped_at=scraped_at,
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return vars(self).copy()
+
