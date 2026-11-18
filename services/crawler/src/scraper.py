@@ -14,6 +14,8 @@ from configs import (
     TARGET_REVIEWS_COUNT,
     COUNTRY_CODE,
     LANG_CODE,
+    REVIEWS_BATCH_SIZE,
+    REVIEW_LOCALES,
 )
 from google_play_scraper import Sort, app, reviews
 from google_play_scraper.exceptions import NotFoundError
@@ -64,5 +66,38 @@ class PlayStoreScraper:
         return None
 
     def get_latest_reviews(self, package_name: str, count: int = TARGET_REVIEWS_COUNT) -> list[dict[str, Any]]:
-        # TODO: DAY 2
-        pass
+        if count <= 0:
+            return []
+
+        collected: dict[str, dict[str, Any]] = {}
+        scraped_at = datetime.now(UTC).isoformat()
+        for lang, country in REVIEW_LOCALES:
+            token = None
+            while len(collected) < count:
+                try:
+                    page, token = self.fetch_reviews_page(
+                        package_name,
+                        lang=lang,
+                        country=country,
+                        sort=Sort.NEWEST,
+                        count=min(REVIEWS_BATCH_SIZE, count - len(collected)),
+                        continuation_token=token,
+                    )
+                except NotFoundError:
+                    logger.warning("Reviews not found on Google Play: %s", package_name)
+                    return list(collected.values())
+                except Exception:
+                    logger.exception("Could not fetch reviews for %s (%s/%s)", package_name, lang, country)
+                    break
+
+                for payload in page:
+                    review = Review.from_scraped_payload(payload, scraped_at)
+                    if review:
+                        collected[review.review_id] = review.to_record()
+                    if len(collected) >= count:
+                        break
+                if not token or not page:
+                    break
+            if len(collected) >= count:
+                break
+        return list(collected.values())

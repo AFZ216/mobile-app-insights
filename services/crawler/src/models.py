@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import Any
 
 from configs import FALLBACK_VERSION_LABEL
 
@@ -16,6 +16,26 @@ class Review:
     content: str
     review_at: str | None
     scraped_at: str
+
+    @classmethod
+    def from_scraped_payload(cls, payload: dict[str, Any], scraped_at: str) -> "Review | None":
+        review_id = payload.get("reviewId")
+        if not review_id:
+            return None
+
+        reviewed_at = payload.get("at")
+        return cls(
+            review_id=review_id,
+            user_name=payload.get("userName"),
+            score=payload.get("score"),
+            thumbs_up_count=payload.get("thumbsUpCount") or 0,
+            content=payload.get("content") or "",
+            review_at=reviewed_at.isoformat() if reviewed_at else None,
+            scraped_at=scraped_at,
+        )
+
+    def to_record(self) -> dict[str, Any]:
+        return vars(self).copy()
 
 
 
