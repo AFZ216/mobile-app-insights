@@ -62,6 +62,8 @@ INSERT INTO applications (title, package_name, category, is_active)
 VALUES
   ('Telegram', 'org.telegram.messenger', 'Messaging', TRUE),
   ('WhatsApp', 'com.whatsapp', 'Messaging', TRUE),
+  ('Bale', 'ir.nasim', 'Messaging', TRUE),
+  ('Eitaa', 'ir.eitaa.messenger', 'Messaging', TRUE),
   ('Myirancell', 'com.myirancell', 'Operator', TRUE),
   ('Mymci', 'ir.mci.ecareapp', 'Operator', TRUE),
   ('MyRightel', 'ir.rightel.myrightel', 'Operator', TRUE),
