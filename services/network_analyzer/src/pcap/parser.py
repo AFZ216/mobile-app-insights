@@ -1,4 +1,5 @@
 import enum
+from bisect import bisect_left
 import socket
 import struct
 from pathlib import Path
@@ -41,15 +42,50 @@ class _FlowAccumulator:
         self.reset_count = 0
         self.handshake_rtt: float | None = None
         self._syn_timestamp: float | None = None
+        self._syn_source: str | None = None
+        self._syn_sequence: int | None = None
         self._sent_ranges: dict[str, list[tuple[int, int]]] = {}
 
     def add_tcp_segment(self, timestamp: float, segment: dpkt.tcp.TCP, frame_length: int, source_ip: str) -> None:
-        # TODO
-        pass
+        self.total_frame_bytes += frame_length
+        payload_length = len(segment.data)
+        self.payload_bytes += payload_length
+        if segment.flags & dpkt.tcp.TH_RST:
+            self.reset_count += 1
+        if segment.win == 0 and segment.flags & dpkt.tcp.TH_ACK:
+            self.zero_window_event_count += 1
+
+        sender = f"{source_ip}:{segment.sport}"
+        if segment.flags & dpkt.tcp.TH_SYN and not segment.flags & dpkt.tcp.TH_ACK:
+            if self._syn_timestamp is None:
+                self._syn_timestamp = timestamp
+                self._syn_source = sender
+                self._syn_sequence = segment.seq
+        elif segment.flags & dpkt.tcp.TH_SYN and segment.flags & dpkt.tcp.TH_ACK:
+            if (self.handshake_rtt is None and self._syn_timestamp is not None
+                    and sender != self._syn_source
+                    and segment.ack == (self._syn_sequence + 1) % (1 << 32)):
+                self.handshake_rtt = timestamp - self._syn_timestamp
+
+        if payload_length:
+            start, end = segment.seq, segment.seq + payload_length
+            ranges = self._sent_ranges.setdefault(sender, [])
+            index = bisect_left(ranges, (start, end))
+            retransmitted = False
+            if index and ranges[index - 1][1] > start:
+                index -= 1
+                retransmitted = True
+            while index < len(ranges) and ranges[index][0] < end:
+                old_start, old_end = ranges.pop(index)
+                start, end = min(start, old_start), max(end, old_end)
+                retransmitted = True
+            if retransmitted:
+                self.retransmission_count += 1
+            ranges.insert(index, (start, end))
 
     def add_udp_datagram(self, datagram: dpkt.udp.UDP, frame_length: int) -> None:
-        # TODO
-        pass
+        self.total_frame_bytes += frame_length
+        self.payload_bytes += len(datagram.data)
 
     def record(self) -> FlowRecord:
         """Freeze the bookkeeping into the flow's immutable record."""
