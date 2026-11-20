@@ -4,6 +4,8 @@ import dpkt
 import pytest
 
 from pcap.analyzer import PcapAnalyzer
+from pcap.errors import PcapParseError
+from pcap.parser import PcapParser
 from tests.builders import (
     CLIENT_IP,
     CLIENT_PORT,
@@ -11,7 +13,9 @@ from tests.builders import (
     SERVER_PORT,
     arp_packet,
     handshake_packets,
+    malformed_packet_bytes,
     tcp_packet,
+    truncated_record_pcap_bytes,
     udp_packet,
     write_pcap,
 )
@@ -54,3 +58,16 @@ def test_pcapdroid_raw_ip_and_udp(tmp_path: Path) -> None:
     assert metrics.total_transferred_bytes == len(packets[0][1])
     assert metrics.total_payload_bytes == 3
     assert metrics.handshake_rtt_avg is None
+
+
+def test_malformed_packet_is_skipped_and_truncated_file_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "malformed.pcap"
+    write_pcap(path, [(1.0, malformed_packet_bytes())])
+    capture = PcapParser().parse(path)
+    assert capture.malformed_packet_count == 1
+    assert capture.flows == ()
+
+    truncated = tmp_path / "truncated.pcap"
+    truncated.write_bytes(truncated_record_pcap_bytes())
+    with pytest.raises(PcapParseError):
+        PcapParser().parse(truncated)
