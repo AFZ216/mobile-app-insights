@@ -126,3 +126,34 @@ class PcapParser:
     def _parse(self, pcap_path: Path) -> ParsedCapture:
         # TODO
         pass
+
+    @staticmethod
+    def _ip_packet(frame: bytes, linktype: int) -> dpkt.ip.IP | dpkt.ip6.IP6 | None:
+        if linktype == DatalinkType.ETHERNET:
+            network = dpkt.ethernet.Ethernet(frame).data
+        elif linktype == DatalinkType.LINUX_SLL:
+            network = dpkt.sll.SLL(frame).data
+        else:
+            version = frame[0] >> 4
+            if version == 4:
+                network = dpkt.ip.IP(frame)
+            elif version == 6:
+                network = dpkt.ip6.IP6(frame)
+            else:
+                return None
+        return network if isinstance(network, (dpkt.ip.IP, dpkt.ip6.IP6)) else None
+
+    @staticmethod
+    def _validate_classic_pcap(path: Path) -> None:
+        """Reject truncated records that dpkt's iterator otherwise silently ignores."""
+        with path.open("rb") as handle:
+            magic = handle.read(4)
+            endian = "<" if magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1") else ">"
+            if len(handle.read(20)) != 20:
+                raise PcapParseError(f"truncated pcap header: {path}")
+            while header := handle.read(16):
+                if len(header) != 16:
+                    raise PcapParseError(f"truncated packet header: {path}")
+                captured_length = struct.unpack(endian + "IIII", header)[2]
+                if len(handle.read(captured_length)) != captured_length:
+                    raise PcapParseError(f"truncated packet data: {path}")
