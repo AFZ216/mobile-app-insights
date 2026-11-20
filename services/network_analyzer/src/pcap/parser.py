@@ -124,8 +124,58 @@ class PcapParser:
         return capture
 
     def _parse(self, pcap_path: Path) -> ParsedCapture:
-        # TODO
-        pass
+        flows: dict[FlowKey, _FlowAccumulator] = {}
+        other_frame_bytes = 0
+        malformed_packet_count = 0
+        with pcap_path.open("rb") as handle:
+            magic = handle.read(4)
+            handle.seek(0)
+            if magic == b"\x0a\x0d\x0d\x0a":
+                reader = dpkt.pcapng.Reader(handle)
+            elif magic in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4",
+                           b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d"):
+                reader = dpkt.pcap.Reader(handle)
+                self._validate_classic_pcap(pcap_path)
+            else:
+                raise PcapParseError(f"unsupported or invalid pcap header: {pcap_path}")
+
+            linktype = reader.datalink()
+            if linktype not in DatalinkType:
+                raise PcapParseError(f"unsupported datalink type {linktype}: {pcap_path}")
+            try:
+                for timestamp, frame in reader:
+                    try:
+                        packet = self._ip_packet(frame, linktype)
+                        if packet is None:
+                            other_frame_bytes += len(frame)
+                            continue
+                        if isinstance(packet, dpkt.ip.IP):
+                            source_ip = socket.inet_ntop(socket.AF_INET, packet.src)
+                            destination_ip = socket.inet_ntop(socket.AF_INET, packet.dst)
+                        else:
+                            source_ip = socket.inet_ntop(socket.AF_INET6, packet.src)
+                            destination_ip = socket.inet_ntop(socket.AF_INET6, packet.dst)
+                        transport = packet.data
+                        if isinstance(transport, dpkt.tcp.TCP):
+                            protocol = "TCP"
+                        elif isinstance(transport, dpkt.udp.UDP):
+                            protocol = "UDP"
+                        else:
+                            other_frame_bytes += len(frame)
+                            continue
+                        key = FlowKey.from_packet(
+                            protocol, source_ip, transport.sport, destination_ip, transport.dport
+                        )
+                        flow = flows.setdefault(key, _FlowAccumulator(key))
+                        if protocol == "TCP":
+                            flow.add_tcp_segment(timestamp, transport, len(frame), source_ip)
+                        else:
+                            flow.add_udp_datagram(transport, len(frame))
+                    except self.DISSECTION_ERRORS:
+                        malformed_packet_count += 1
+            except (dpkt.UnpackError, struct.error, ValueError) as error:
+                raise PcapParseError(f"invalid capture {pcap_path}: {error}") from error
+        return ParsedCapture(tuple(flow.record() for flow in flows.values()), other_frame_bytes, malformed_packet_count)
 
     @staticmethod
     def _ip_packet(frame: bytes, linktype: int) -> dpkt.ip.IP | dpkt.ip6.IP6 | None:
