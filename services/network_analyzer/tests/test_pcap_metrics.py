@@ -12,6 +12,7 @@ from tests.builders import (
     arp_packet,
     handshake_packets,
     tcp_packet,
+    udp_packet,
     write_pcap,
 )
 
@@ -41,3 +42,15 @@ def test_seven_metrics_from_controlled_tcp_capture(tmp_path: Path) -> None:
     assert metrics.total_payload_bytes == 200
     assert metrics.overhead_ratio == pytest.approx((total - 200) / total)
     assert metrics.dominant_server_port == 443
+
+
+def test_pcapdroid_raw_ip_and_udp(tmp_path: Path) -> None:
+    packets = [(1.0, udp_packet(CLIENT_IP, SERVER_IP, CLIENT_PORT, SERVER_PORT, b"abc")[14:])]
+    path = tmp_path / "phone.pcap"
+    write_pcap(path, packets, linktype=101)
+
+    metrics = PcapAnalyzer().analyze(path)
+
+    assert metrics.total_transferred_bytes == len(packets[0][1])
+    assert metrics.total_payload_bytes == 3
+    assert metrics.handshake_rtt_avg is None
